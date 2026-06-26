@@ -32,7 +32,7 @@ export function DocumentEditor({
   role,
 }: DocumentEditorProps) {
   const editable = role !== "viewer"
-  const { doc, loading, lamportClock, updateContent, updateTitle, setDocContent } = useDocument(
+  const { doc, loading, fromCache, lamportClock, updateContent, updateTitle, setDocContent } = useDocument(
     documentId,
     serverTitle
   )
@@ -47,6 +47,16 @@ export function DocumentEditor({
   const [saveTrayOpen, setSaveTrayOpen] = useState(false)
   const [historyOpen, setHistoryOpen] = useState(false)
   const [aiOpen, setAiOpen] = useState(false)
+  // syncedOnce: true after first sync completes (needed for fresh docs with no IDB entry)
+  const [syncedOnce, setSyncedOnce] = useState(false)
+  // Offline fallback: if no sync within 3s, show whatever we have anyway
+  const [syncTimedOut, setSyncTimedOut] = useState(false)
+
+  useEffect(() => {
+    if (loading || fromCache || syncedOnce) return
+    const t = setTimeout(() => setSyncTimedOut(true), 3000)
+    return () => clearTimeout(t)
+  }, [loading, fromCache, syncedOnce])
 
   const handleSyncComplete = useCallback((merged: JSONContent, syncedAt: number) => {
     // Skip if editor already has this exact content — preserves undo stack
@@ -59,6 +69,7 @@ export function DocumentEditor({
     }
     setSyncing(false)
     setLastSyncedAt(syncedAt)
+    setSyncedOnce(true)
   }, [setDocContent])
 
   useSyncEngine({
@@ -113,11 +124,16 @@ export function DocumentEditor({
     editor.setEditable(editable)
   }, [editable, editor])
 
-  if (loading) {
+  // Show loader until:
+  // - IDB read done AND
+  // - Either: doc was in IDB (fromCache), first sync completed, or 3s offline fallback
+  const isReady = !loading && (fromCache || syncedOnce || syncTimedOut)
+
+  if (!isReady) {
     return (
       <div className="flex-1 flex items-center justify-center">
         <motion.div
-          className="w-1.5 h-1.5 rounded-full bg-signal"
+          className="w-1.5 h-1.5 rounded-full bg-red-500"
           animate={{ scale: [1, 1.4, 1], opacity: [1, 0.4, 1] }}
           transition={{ duration: 1.2, repeat: Infinity }}
         />

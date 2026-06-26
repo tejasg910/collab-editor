@@ -19,6 +19,7 @@ const EMPTY_DOC: JSONContent = {
 type UseDocumentReturn = {
   doc: LocalDocument | null
   loading: boolean
+  fromCache: boolean
   lamportClock: number
   updateContent: (content: JSONContent, userId: string) => Promise<void>
   updateTitle: (title: string) => Promise<void>
@@ -28,6 +29,7 @@ type UseDocumentReturn = {
 export function useDocument(docId: string, serverTitle?: string): UseDocumentReturn {
   const [doc, setDoc] = useState<LocalDocument | null>(null)
   const [loading, setLoading] = useState(true)
+  const [fromCache, setFromCache] = useState(false)
   const [lamportClock, setLamportClock] = useState(0)
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
@@ -42,6 +44,7 @@ export function useDocument(docId: string, serverTitle?: string): UseDocumentRet
         if (cancelled) return
 
         if (existing) {
+          setFromCache(true)
           setDoc(existing)
           const meta = await getSyncMeta(docId)
           if (!cancelled) setLamportClock(meta.lastSyncedClock)
@@ -117,5 +120,5 @@ export function useDocument(docId: string, serverTitle?: string): UseDocumentRet
     []
   )
 
-  return { doc, loading, lamportClock, updateContent, updateTitle, setDocContent }
+  return { doc, loading, fromCache, lamportClock, updateContent, updateTitle, setDocContent }
 }
