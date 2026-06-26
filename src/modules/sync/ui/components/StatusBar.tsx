@@ -7,9 +7,10 @@ import { Wifi, WifiOff, RefreshCw } from "lucide-react"
 interface StatusBarProps {
   syncing?: boolean
   lastSyncedAt?: number
+  onSync?: () => void
 }
 
-export function StatusBar({ syncing = false, lastSyncedAt }: StatusBarProps) {
+export function StatusBar({ syncing = false, lastSyncedAt, onSync }: StatusBarProps) {
   const online = useOnlineStatus()
 
   const status = syncing ? "syncing" : online ? "online" : "offline"
@@ -38,7 +39,7 @@ export function StatusBar({ syncing = false, lastSyncedAt }: StatusBarProps) {
   }[status]
 
   return (
-    <div className="flex items-center gap-1.5 px-4 py-2 border-t border-white/[0.06] bg-[#0a0a0a]">
+    <div className="flex items-center justify-between px-4 py-2 border-t border-white/[0.06] bg-[#0a0a0a]">
       <AnimatePresence mode="wait">
         <motion.div
           key={status}
@@ -57,6 +58,18 @@ export function StatusBar({ syncing = false, lastSyncedAt }: StatusBarProps) {
           <span>{config.label}</span>
         </motion.div>
       </AnimatePresence>
+
+      {onSync && online && (
+        <button
+          onClick={onSync}
+          disabled={syncing}
+          title="Sync now"
+          className="flex items-center gap-1 text-xs text-white/40 hover:text-white/70 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+        >
+          <RefreshCw className={`w-3 h-3 ${syncing ? "animate-spin" : ""}`} />
+          <span>Sync</span>
+        </button>
+      )}
     </div>
   )
 }

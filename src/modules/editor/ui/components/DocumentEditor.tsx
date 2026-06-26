@@ -72,7 +72,7 @@ export function DocumentEditor({
     setSyncedOnce(true)
   }, [setDocContent])
 
-  useSyncEngine({
+  const { sync } = useSyncEngine({
     documentId,
     userId,
     role,
@@ -212,7 +212,7 @@ export function DocumentEditor({
         </div>
 
         {/* Status bar */}
-        <StatusBar syncing={syncing} lastSyncedAt={lastSyncedAt} />
+        <StatusBar syncing={syncing} lastSyncedAt={lastSyncedAt} onSync={sync} />
       </div>
 
       {/* Version panels — outside flex column so they overlay */}

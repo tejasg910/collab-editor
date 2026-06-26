@@ -12,6 +12,7 @@ import {
   getLocalDoc,
   saveLocalDoc,
 } from "@/lib/db/local"
+import { threeWayMerge, pickWinner } from "@/modules/sync/utils/mergeUtils"
 import type { JSONContent } from "@tiptap/react"
 
 interface SyncEngineOptions {
@@ -23,15 +24,7 @@ interface SyncEngineOptions {
   onSyncError: () => void
 }
 
-// Deterministic merge: sort by lamportClock, break ties by userId (alphabetical)
-// Highest clock = last writer = wins
-function pickWinner(ops: Array<{ lamportClock: number; userId: string; content: unknown }>) {
-  return [...ops].sort((a, b) =>
-    a.lamportClock !== b.lamportClock
-      ? a.lamportClock - b.lamportClock
-      : a.userId.localeCompare(b.userId)
-  ).at(-1)!
-}
+const EMPTY_DOC: JSONContent = { type: "doc", content: [{ type: "paragraph" }] }
 
 export function useSyncEngine({
   documentId,
@@ -45,13 +38,12 @@ export function useSyncEngine({
   const syncingRef = useRef(false)
 
   const sync = useCallback(async () => {
-    // viewers cannot push — they can still pull
     if (syncingRef.current) return
     syncingRef.current = true
     onSyncStart()
 
     try {
-      // ── 1. PUSH: send unsynced local ops to server ─────────────────
+      // ── 1. PUSH: send unsynced local ops ──────────────────────────
       if (role !== "viewer") {
         const unsyncedOps = await getUnsyncedOps(documentId)
 
@@ -72,12 +64,13 @@ export function useSyncEngine({
         }
       }
 
-      // ── 2. PULL: fetch remote ops since last sync ───────────────────
+      // ── 2. PULL: fetch remote ops since last sync ──────────────────
       const meta = await getSyncMeta(documentId)
+      const localClock = meta.lastSyncedClock
+
       const pullRes = await fetch(
         `/api/sync/pull?documentId=${documentId}&since=${meta.lastSyncedClock}`
       )
-
       if (!pullRes.ok) {
         const { error } = await pullRes.json()
         throw new Error(error ?? "Pull failed")
@@ -87,30 +80,48 @@ export function useSyncEngine({
       const now = Date.now()
 
       if (remoteOps.length > 0) {
-        // ── 3. MERGE: last writer wins by lamport clock ─────────────
-        const winner = pickWinner(remoteOps)
-        const maxClock = winner.lamportClock
+        // ── 3. MERGE: three-way merge preserving both parties' edits ──
+        const remoteWinner = pickWinner(remoteOps)
+        const remoteClock  = remoteWinner.lamportClock
 
-        // Update local lamport clock to be ahead of received ops
+        const base = meta.syncedContent ?? EMPTY_DOC
+        const localDoc = await getLocalDoc(documentId)
+        const localContent = localDoc?.content ?? EMPTY_DOC
+
+        const merged = threeWayMerge(
+          base,
+          localContent,
+          remoteWinner.content as JSONContent,
+          localClock,
+          remoteClock
+        )
+
+        const maxClock = Math.max(localClock, remoteClock)
         await updateLamportClock(documentId, maxClock)
 
-        // Persist merged content to IndexedDB
-        const localDoc = await getLocalDoc(documentId)
         if (localDoc) {
-          await saveLocalDoc({
-            ...localDoc,
-            content: winner.content as JSONContent,
-            syncedAt: now,
-          })
+          await saveLocalDoc({ ...localDoc, content: merged, syncedAt: now })
         }
 
-        await saveSyncMeta({ documentId, lastSyncedClock: maxClock, lastSyncedAt: now })
-        onSyncComplete(winner.content as JSONContent, now)
+        await saveSyncMeta({
+          documentId,
+          lastSyncedClock: maxClock + 1,
+          lastSyncedAt: now,
+          syncedContent: merged,
+        })
+
+        onSyncComplete(merged, now)
       } else {
-        // No remote changes — still update lastSyncedAt
-        await saveSyncMeta({ ...meta, lastSyncedAt: now })
         const localDoc = await getLocalDoc(documentId)
-        onSyncComplete(localDoc?.content ?? { type: "doc", content: [] }, now)
+        const localContent = localDoc?.content ?? EMPTY_DOC
+
+        await saveSyncMeta({
+          ...meta,
+          lastSyncedAt: now,
+          syncedContent: localContent,
+        })
+
+        onSyncComplete(localContent, now)
       }
     } catch {
       onSyncError()

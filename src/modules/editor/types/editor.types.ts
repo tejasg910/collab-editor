@@ -24,4 +24,5 @@ export type SyncMeta = {
   documentId: string
   lastSyncedClock: number
   lastSyncedAt: number
+  syncedContent?: JSONContent  // base snapshot for three-way merge
 }
