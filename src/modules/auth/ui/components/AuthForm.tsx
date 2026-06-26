@@ -1,6 +1,6 @@
 "use client"
 
-import { useActionState, useEffect, useState } from "react"
+import { useActionState, useEffect, useState, startTransition } from "react"
 import { motion, AnimatePresence } from "framer-motion"
 import { loginAction, registerAction, type AuthFormState } from "@/modules/auth/server/actions/auth.actions"
 import { Button } from "@/components/ui/button"
@@ -19,7 +19,7 @@ export function AuthForm({ mode }: { mode: Mode }) {
 
   useEffect(() => {
     if (state.error) {
-      setShake(true)
+      startTransition(() => setShake(true))
       const t = setTimeout(() => setShake(false), 500)
       return () => clearTimeout(t)
     }

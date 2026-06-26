@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect, useRef } from "react"
+import { useState, useEffect, useRef, startTransition } from "react"
 import { motion, AnimatePresence } from "framer-motion"
 import { X, UserPlus, Loader2, Crown, Pencil, Eye } from "lucide-react"
 import {
@@ -34,7 +34,7 @@ export function ShareDialog({ open, onClose, documentId }: ShareDialogProps) {
 
   useEffect(() => {
     if (!open) return
-    setLoadingMembers(true)
+    startTransition(() => setLoadingMembers(true))
     fetch(`/api/documents/${documentId}/members`)
       .then((r) => r.json())
       .then(({ members }) => setMembers(members ?? []))

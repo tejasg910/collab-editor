@@ -391,7 +391,7 @@ export function LandingPage() {
               className="font-podium uppercase leading-[0.95] text-white"
               style={{ fontSize: "clamp(2rem, 5vw, 4rem)" }}
             >
-              "Your documents survive every outage, every conflict, every teammate."
+              &ldquo;Your documents survive every outage, every conflict, every teammate.&rdquo;
             </p>
           </div>
         </Reveal>

@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useState } from "react"
+import { useEffect, useState, startTransition } from "react"
 import { motion, AnimatePresence } from "framer-motion"
 import { X, RotateCcw, Clock } from "lucide-react"
 import type { Snapshot } from "@/modules/versions/types/version.types"
@@ -31,7 +31,7 @@ export function VersionHistory({ open, onClose, documentId, onRestore }: Version
 
   useEffect(() => {
     if (!open) return
-    setLoading(true)
+    startTransition(() => setLoading(true))
     fetch(`/api/snapshots?documentId=${documentId}`)
       .then((r) => r.json())
       .then(({ snapshots }) => setSnapshots(snapshots ?? []))
@@ -107,7 +107,7 @@ export function VersionHistory({ open, onClose, documentId, onRestore }: Version
               ) : snapshots.length === 0 ? (
                 <div className="px-4 py-8 text-center">
                   <p className="text-sm text-white/60 font-inter">No saved versions yet.</p>
-                  <p className="text-xs text-white/40 font-inter mt-1">Use "Save version" to checkpoint your work.</p>
+                  <p className="text-xs text-white/40 font-inter mt-1">Use &ldquo;Save version&rdquo; to checkpoint your work.</p>
                 </div>
               ) : (
                 <ul className="divide-y divide-white/[0.06]">

@@ -1,6 +1,6 @@
 import type { ReactNode } from "react"
 import Link from "next/link"
-import { FileText, Wifi, Clock, Shield } from "lucide-react"
+import { Wifi, Clock, Shield } from "lucide-react"
 
 export default function AuthLayout({ children }: { children: ReactNode }) {
   return (

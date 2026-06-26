@@ -1,26 +1,23 @@
 "use client"
 
 import { motion, AnimatePresence } from "framer-motion"
-import { useOnlineStatus } from "@/modules/sync/ui/hooks/useOnlineStatus"
 import { Wifi, WifiOff, RefreshCw } from "lucide-react"
 
 interface StatusBarProps {
+  online: boolean
   syncing?: boolean
   lastSyncedAt?: number
   onSync?: () => void
 }
 
-export function StatusBar({ syncing = false, lastSyncedAt, onSync }: StatusBarProps) {
-  const online = useOnlineStatus()
-
-  const status = syncing ? "syncing" : online ? "online" : "offline"
+export function StatusBar({ online, syncing = false, lastSyncedAt, onSync }: StatusBarProps) {
+  // offline always wins — never show syncing/synced when disconnected
+  const status = !online ? "offline" : syncing ? "syncing" : "online"
 
   const config = {
     online: {
       icon: <Wifi className="w-3 h-3" />,
-      label: lastSyncedAt
-        ? `Synced ${timeAgo(lastSyncedAt)}`
-        : "Online",
+      label: lastSyncedAt ? `Synced ${timeAgo(lastSyncedAt)}` : "Online",
       color: "text-confirmed",
       dot: "bg-confirmed",
     },

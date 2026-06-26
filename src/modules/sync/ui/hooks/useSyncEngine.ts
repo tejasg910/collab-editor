@@ -17,7 +17,6 @@ import type { JSONContent } from "@tiptap/react"
 
 interface SyncEngineOptions {
   documentId: string
-  userId: string
   role: "owner" | "editor" | "viewer"
   onSyncStart: () => void
   onSyncComplete: (mergedContent: JSONContent, lastSyncedAt: number) => void
@@ -28,7 +27,6 @@ const EMPTY_DOC: JSONContent = { type: "doc", content: [{ type: "paragraph" }] }
 
 export function useSyncEngine({
   documentId,
-  userId,
   role,
   onSyncStart,
   onSyncComplete,
@@ -37,13 +35,28 @@ export function useSyncEngine({
   const isOnline = useOnlineStatus()
   const syncingRef = useRef(false)
 
+  // Store callbacks in refs so `sync` never needs them as deps.
+  // Inline props change every render — putting them in deps makes `sync`
+  // unstable, which resets the 30s interval on every render.
+  const onSyncStartRef = useRef(onSyncStart)
+  const onSyncCompleteRef = useRef(onSyncComplete)
+  const onSyncErrorRef = useRef(onSyncError)
+  useEffect(() => { onSyncStartRef.current = onSyncStart }, [onSyncStart])
+  useEffect(() => { onSyncCompleteRef.current = onSyncComplete }, [onSyncComplete])
+  useEffect(() => { onSyncErrorRef.current = onSyncError }, [onSyncError])
+
+  const isOnlineRef = useRef(isOnline)
+  useEffect(() => { isOnlineRef.current = isOnline }, [isOnline])
+
   const sync = useCallback(async () => {
+    // Never attempt network work while offline
+    if (!isOnlineRef.current) return
     if (syncingRef.current) return
     syncingRef.current = true
-    onSyncStart()
+    onSyncStartRef.current()
 
     try {
-      // ── 1. PUSH: send unsynced local ops ──────────────────────────
+      // ── 1. PUSH ──────────────────────────────────────────────────
       if (role !== "viewer") {
         const unsyncedOps = await getUnsyncedOps(documentId)
 
@@ -64,7 +77,7 @@ export function useSyncEngine({
         }
       }
 
-      // ── 2. PULL: fetch remote ops since last sync ──────────────────
+      // ── 2. PULL ──────────────────────────────────────────────────
       const meta = await getSyncMeta(documentId)
       const localClock = meta.lastSyncedClock
 
@@ -80,7 +93,7 @@ export function useSyncEngine({
       const now = Date.now()
 
       if (remoteOps.length > 0) {
-        // ── 3. MERGE: three-way merge preserving both parties' edits ──
+        // ── 3. THREE-WAY MERGE ───────────────────────────────────
         const remoteWinner = pickWinner(remoteOps)
         const remoteClock  = remoteWinner.lamportClock
 
@@ -110,7 +123,7 @@ export function useSyncEngine({
           syncedContent: merged,
         })
 
-        onSyncComplete(merged, now)
+        onSyncCompleteRef.current(merged, now)
       } else {
         const localDoc = await getLocalDoc(documentId)
         const localContent = localDoc?.content ?? EMPTY_DOC
@@ -121,21 +134,21 @@ export function useSyncEngine({
           syncedContent: localContent,
         })
 
-        onSyncComplete(localContent, now)
+        onSyncCompleteRef.current(localContent, now)
       }
     } catch {
-      onSyncError()
+      onSyncErrorRef.current()
     } finally {
       syncingRef.current = false
     }
-  }, [documentId, userId, role, onSyncStart, onSyncComplete, onSyncError])
+  }, [documentId, role]) // stable — callbacks and isOnline read via refs
 
-  // Sync immediately on reconnect
+  // Sync immediately when coming back online (not on every render)
   useEffect(() => {
     if (isOnline) sync()
-  }, [isOnline]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [isOnline, sync])
 
-  // Periodic sync every 30s while online
+  // Periodic sync every 30s — stable because `sync` is now stable
   useEffect(() => {
     if (!isOnline) return
     const id = setInterval(sync, 30_000)

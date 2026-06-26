@@ -129,7 +129,7 @@ export function SaveVersionTray({
                       transition={{ delay: 0.2 }}
                       className="text-xs text-white/50 font-inter"
                     >
-                      "{label.trim()}"
+                      &ldquo;{label.trim()}&rdquo;
                     </motion.p>
                   )}
                 </motion.div>

@@ -1,6 +1,6 @@
 "use client"
 
-import { useActionState, useState, useEffect } from "react"
+import { useActionState, useState, useEffect, startTransition } from "react"
 import { motion, AnimatePresence } from "framer-motion"
 import { Plus, X, Loader2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
@@ -14,7 +14,7 @@ export function CreateDocumentDialog() {
 
   // close tray on success (redirect handles nav, but close if error)
   useEffect(() => {
-    if (!pending && !state.error) setOpen(false)
+    if (!pending && !state.error) startTransition(() => setOpen(false))
   }, [pending, state.error])
 
   return (

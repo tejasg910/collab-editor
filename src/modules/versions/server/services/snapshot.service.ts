@@ -1,5 +1,5 @@
 import { db, withRLS } from "@/lib/db"
-import { documentSnapshots, documentMembers, syncOperations } from "@/lib/db/schema"
+import { documentSnapshots, syncOperations } from "@/lib/db/schema"
 import { eq, desc, max } from "drizzle-orm"
 import type { JSONContent } from "@tiptap/react"
 

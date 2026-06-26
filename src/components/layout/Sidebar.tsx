@@ -3,7 +3,7 @@
 import { useState } from "react"
 import Link from "next/link"
 import { useRouter } from "next/navigation"
-import { LogOut, Menu, FileText, X } from "lucide-react"
+import { LogOut, Menu, FileText } from "lucide-react"
 import { Avatar, AvatarFallback } from "@/components/ui/avatar"
 import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet"
 import { SyncOrb } from "@/modules/sync/ui/components/SyncOrb"

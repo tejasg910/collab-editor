@@ -2,7 +2,7 @@
 
 import { useState, useCallback } from "react"
 import { motion, AnimatePresence } from "framer-motion"
-import { Sparkles, X, Loader2, CornerDownLeft, Replace, ChevronDown } from "lucide-react"
+import { Sparkles, X, Loader2, CornerDownLeft, Replace } from "lucide-react"
 import type { Editor } from "@tiptap/react"
 
 interface AIPanelProps {
