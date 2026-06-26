@@ -37,7 +37,12 @@ export async function getDocumentById(documentId: string, userId: string) {
     })
     .from(documents)
     .innerJoin(documentMembers, eq(documentMembers.documentId, documents.id))
-    .where(eq(documentMembers.userId, userId))
+    .where(
+      and(
+        eq(documents.id, documentId),
+        eq(documentMembers.userId, userId)
+      )
+    )
     .limit(1)
 
   return rows[0] ?? null
