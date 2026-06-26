@@ -32,7 +32,7 @@ export async function POST(req: Request) {
   const result = streamText({
     model: groq("llama-3.1-8b-instant"),
     prompt,
-    maxTokens: 1024,
+    maxOutputTokens: 1024,
     temperature: 0.7,
   })
 
