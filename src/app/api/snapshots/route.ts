@@ -18,34 +18,47 @@ export async function GET(req: NextRequest) {
   }
 }
 
+const MAX_SNAPSHOT_BYTES = 1 * 1024 * 1024 // 1 MB — a single doc snapshot, not a batch
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+
 export async function POST(req: NextRequest) {
   const session = await auth.api.getSession({ headers: await headers() })
   if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
 
-  let body: { documentId: string; content: unknown; label?: string; atLamportClock: number }
+  let rawBody: string
   try {
-    body = await req.json()
+    const buffer = await req.arrayBuffer()
+    if (buffer.byteLength > MAX_SNAPSHOT_BYTES) {
+      return NextResponse.json({ error: "Payload too large (max 1 MB)" }, { status: 413 })
+    }
+    rawBody = new TextDecoder().decode(buffer)
+  } catch {
+    return NextResponse.json({ error: "Failed to read request body" }, { status: 400 })
+  }
+
+  let body: { documentId: unknown; content: unknown; label?: unknown; atLamportClock?: unknown }
+  try {
+    body = JSON.parse(rawBody)
   } catch {
     return NextResponse.json({ error: "Invalid JSON" }, { status: 400 })
   }
 
   const { documentId, content, label, atLamportClock } = body
-  if (!documentId || !content) {
-    return NextResponse.json({ error: "Missing fields" }, { status: 400 })
-  }
 
-  // Payload size guard
-  if (JSON.stringify(content).length > 512 * 1024) {
-    return NextResponse.json({ error: "Content too large" }, { status: 400 })
+  if (typeof documentId !== "string" || !UUID_RE.test(documentId)) {
+    return NextResponse.json({ error: "Invalid or missing documentId" }, { status: 400 })
+  }
+  if (!content || typeof content !== "object" || Array.isArray(content)) {
+    return NextResponse.json({ error: "content must be an object" }, { status: 400 })
   }
 
   try {
     const snapshot = await createSnapshot(
       session.user.id,
-      documentId,
+      documentId as string,
       content as never,
-      label ?? null,
-      atLamportClock ?? 0
+      typeof label === "string" ? label : null,
+      typeof atLamportClock === "number" ? atLamportClock : 0
     )
     return NextResponse.json({ snapshot })
   } catch (err) {

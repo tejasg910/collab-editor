@@ -1,5 +1,10 @@
 import type { JSONContent } from "@tiptap/react"
 
+export type MergeResult = {
+  content: JSONContent
+  conflictCount: number
+}
+
 /**
  * Three-way merge at the block level.
  *
@@ -9,6 +14,10 @@ import type { JSONContent } from "@tiptap/react"
  *   base == local            → only remote changed; take remote
  *   base == remote           → only local changed; take local
  *   base != local != remote  → genuine conflict; higher Lamport clock wins
+ *
+ * Returns merged content + how many blocks had genuine conflicts (both sides
+ * changed the same block from the same base). Callers use conflictCount to
+ * show a toast and auto-save a snapshot so the user can recover either version.
  */
 export function threeWayMerge(
   base: JSONContent,
@@ -16,13 +25,14 @@ export function threeWayMerge(
   remote: JSONContent,
   localClock: number,
   remoteClock: number
-): JSONContent {
+): MergeResult {
   const baseBlocks   = base?.content   ?? []
   const localBlocks  = local?.content  ?? []
   const remoteBlocks = remote?.content ?? []
 
   const maxLen = Math.max(baseBlocks.length, localBlocks.length, remoteBlocks.length)
   const merged: JSONContent[] = []
+  let conflictCount = 0
 
   for (let i = 0; i < maxLen; i++) {
     const b = baseBlocks[i]
@@ -43,14 +53,19 @@ export function threeWayMerge(
     } else if (bStr === rStr) {
       if (l !== undefined) merged.push(l)
     } else {
+      // Genuine conflict — both changed same block from same base
+      conflictCount++
       const winner = localClock >= remoteClock ? l : r
       if (winner !== undefined) merged.push(winner)
     }
   }
 
   return {
-    type: "doc",
-    content: merged.length > 0 ? merged : [{ type: "paragraph" }],
+    content: {
+      type: "doc",
+      content: merged.length > 0 ? merged : [{ type: "paragraph" }],
+    },
+    conflictCount,
   }
 }
 

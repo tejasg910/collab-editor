@@ -2,7 +2,7 @@
 
 import { useEffect, useState, startTransition } from "react"
 import { motion, AnimatePresence } from "framer-motion"
-import { X, RotateCcw, Clock } from "lucide-react"
+import { X, RotateCcw, Clock, AlertTriangle } from "lucide-react"
 import type { Snapshot } from "@/modules/versions/types/version.types"
 import type { JSONContent } from "@tiptap/react"
 
@@ -121,9 +121,14 @@ export function VersionHistory({ open, onClose, documentId, onRestore }: Version
                     >
                       <div className="flex items-start justify-between gap-2">
                         <div className="min-w-0">
-                          <p className="text-xs font-medium text-white truncate font-inter">
-                            {snap.label ?? `Version ${snapshots.length - i}`}
-                          </p>
+                          <div className="flex items-center gap-1.5">
+                            {snap.label?.startsWith("Auto-resolved:") && (
+                              <AlertTriangle className="w-3 h-3 text-amber-400 shrink-0" />
+                            )}
+                            <p className={`text-xs font-medium truncate font-inter ${snap.label?.startsWith("Auto-resolved:") ? "text-amber-300" : "text-white"}`}>
+                              {snap.label ?? `Version ${snapshots.length - i}`}
+                            </p>
+                          </div>
                           <p className="text-xs text-white/45 mt-0.5 font-inter">
                             {timeAgo(snap.createdAt)}
                           </p>

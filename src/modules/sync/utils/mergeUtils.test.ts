@@ -10,14 +10,16 @@ import type { JSONContent } from "@tiptap/react"
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
 function para(text: string): JSONContent {
-  return {
-    type: "paragraph",
-    content: [{ type: "text", text }],
-  }
+  return { type: "paragraph", content: [{ type: "text", text }] }
 }
 
 function doc(...blocks: JSONContent[]): JSONContent {
   return { type: "doc", content: blocks }
+}
+
+// Unwrap helper — tests care about content, not the MergeResult wrapper
+function merge(...args: Parameters<typeof threeWayMerge>) {
+  return threeWayMerge(...args).content
 }
 
 // ── nextLamportClock ────────────────────────────────────────────────────────
@@ -76,94 +78,103 @@ describe("pickWinner", () => {
 describe("threeWayMerge", () => {
   it("no changes from either side → returns local (same as remote)", () => {
     const base = doc(para("A"), para("B"))
-    const merged = threeWayMerge(base, base, base, 1, 1)
-    expect(merged.content).toHaveLength(2)
-    expect((merged.content![0].content![0] as JSONContent).text).toBe("A")
+    const result = merge(base, base, base, 1, 1)
+    expect(result.content).toHaveLength(2)
+    expect((result.content![0].content![0] as JSONContent).text).toBe("A")
   })
 
   it("only local changed → keeps local change", () => {
     const base   = doc(para("A"), para("B"))
     const local  = doc(para("A-edited"), para("B"))
     const remote = doc(para("A"), para("B"))
-    const merged = threeWayMerge(base, local, remote, 2, 1)
-    expect((merged.content![0].content![0] as JSONContent).text).toBe("A-edited")
-    expect((merged.content![1].content![0] as JSONContent).text).toBe("B")
+    const result = merge(base, local, remote, 2, 1)
+    expect((result.content![0].content![0] as JSONContent).text).toBe("A-edited")
+    expect((result.content![1].content![0] as JSONContent).text).toBe("B")
   })
 
   it("only remote changed → keeps remote change", () => {
     const base   = doc(para("A"), para("B"))
     const local  = doc(para("A"), para("B"))
     const remote = doc(para("A"), para("B-edited"))
-    const merged = threeWayMerge(base, local, remote, 1, 2)
-    expect((merged.content![0].content![0] as JSONContent).text).toBe("A")
-    expect((merged.content![1].content![0] as JSONContent).text).toBe("B-edited")
+    const result = merge(base, local, remote, 1, 2)
+    expect((result.content![0].content![0] as JSONContent).text).toBe("A")
+    expect((result.content![1].content![0] as JSONContent).text).toBe("B-edited")
   })
 
   it("different sections edited → preserves both (key case for offline work)", () => {
     const base   = doc(para("Intro"), para("Body"))
-    const local  = doc(para("Intro edited"), para("Body"))      // local changed para 0
-    const remote = doc(para("Intro"), para("Body edited"))      // remote changed para 1
-    const merged = threeWayMerge(base, local, remote, 2, 3)
-    expect(merged.content).toHaveLength(2)
-    expect((merged.content![0].content![0] as JSONContent).text).toBe("Intro edited")
-    expect((merged.content![1].content![0] as JSONContent).text).toBe("Body edited")
+    const local  = doc(para("Intro edited"), para("Body"))
+    const remote = doc(para("Intro"), para("Body edited"))
+    const result = merge(base, local, remote, 2, 3)
+    expect(result.content).toHaveLength(2)
+    expect((result.content![0].content![0] as JSONContent).text).toBe("Intro edited")
+    expect((result.content![1].content![0] as JSONContent).text).toBe("Body edited")
   })
 
   it("genuine conflict (both changed same block) → higher clock wins", () => {
     const base   = doc(para("original"))
-    const local  = doc(para("local version"))   // clock 5
-    const remote = doc(para("remote version"))  // clock 10
-    const merged = threeWayMerge(base, local, remote, 5, 10)
-    // remote clock higher → remote wins
-    expect((merged.content![0].content![0] as JSONContent).text).toBe("remote version")
+    const local  = doc(para("local version"))
+    const remote = doc(para("remote version"))
+    const result = merge(base, local, remote, 5, 10)
+    expect((result.content![0].content![0] as JSONContent).text).toBe("remote version")
   })
 
   it("genuine conflict → local wins when local clock higher", () => {
     const base   = doc(para("original"))
-    const local  = doc(para("local version"))   // clock 10
-    const remote = doc(para("remote version"))  // clock 5
-    const merged = threeWayMerge(base, local, remote, 10, 5)
-    expect((merged.content![0].content![0] as JSONContent).text).toBe("local version")
+    const local  = doc(para("local version"))
+    const remote = doc(para("remote version"))
+    const result = merge(base, local, remote, 10, 5)
+    expect((result.content![0].content![0] as JSONContent).text).toBe("local version")
+  })
+
+  it("genuine conflict → conflictCount incremented", () => {
+    const base   = doc(para("original"))
+    const local  = doc(para("local version"))
+    const remote = doc(para("remote version"))
+    const { conflictCount } = threeWayMerge(base, local, remote, 5, 10)
+    expect(conflictCount).toBe(1)
+  })
+
+  it("no conflict → conflictCount is 0", () => {
+    const base   = doc(para("A"), para("B"))
+    const local  = doc(para("A-edited"), para("B"))
+    const remote = doc(para("A"), para("B-edited"))
+    const { conflictCount } = threeWayMerge(base, local, remote, 2, 3)
+    expect(conflictCount).toBe(0)
   })
 
   it("local adds new block, remote unchanged → both new blocks included", () => {
     const base   = doc(para("A"))
-    const local  = doc(para("A"), para("B-local"))  // added para 1
-    const remote = doc(para("A"))                    // no change
-    const merged = threeWayMerge(base, local, remote, 2, 1)
-    expect(merged.content).toHaveLength(2)
-    expect((merged.content![1].content![0] as JSONContent).text).toBe("B-local")
+    const local  = doc(para("A"), para("B-local"))
+    const remote = doc(para("A"))
+    const result = merge(base, local, remote, 2, 1)
+    expect(result.content).toHaveLength(2)
+    expect((result.content![1].content![0] as JSONContent).text).toBe("B-local")
   })
 
   it("both add different new blocks (no base) → includes both", () => {
     const base   = doc(para("A"))
     const local  = doc(para("A"), para("B-local"))
     const remote = doc(para("A"), para("B-remote"))
-    const merged = threeWayMerge(base, local, remote, 2, 3)
-    // pos 1 has no base → both inserted
-    expect(merged.content).toHaveLength(3)
+    const result = merge(base, local, remote, 2, 3)
+    expect(result.content).toHaveLength(3)
   })
 
   it("remote deletes a block that local didn't touch → deletion honoured", () => {
     const base   = doc(para("A"), para("B"), para("C"))
-    const local  = doc(para("A"), para("B"), para("C")) // unchanged
-    const remote = doc(para("A"), para("C"))             // deleted B (index 1)
-    // Remote at index 1 = para("C"), base at index 1 = para("B")
-    // local at index 1 = para("B") == base → remote changed → take remote = para("C")
-    // index 2: local=para("C"), remote=undefined, base=para("C") → base==remote → take local
-    const merged = threeWayMerge(base, local, remote, 1, 2)
-    // Result should have C,C (remote's re-arrangement) — not the concern;
-    // important: B is gone (deletion honoured) and no crash
-    expect(merged.content!.some(
+    const local  = doc(para("A"), para("B"), para("C"))
+    const remote = doc(para("A"), para("C"))
+    const result = merge(base, local, remote, 1, 2)
+    expect(result.content!.some(
       b => (b.content?.[0] as JSONContent)?.text === "B"
     )).toBe(false)
   })
 
   it("empty docs → returns single empty paragraph", () => {
     const empty: JSONContent = { type: "doc", content: [] }
-    const merged = threeWayMerge(empty, empty, empty, 0, 0)
-    expect(merged.type).toBe("doc")
-    expect(merged.content).toHaveLength(1)
-    expect(merged.content![0].type).toBe("paragraph")
+    const result = merge(empty, empty, empty, 0, 0)
+    expect(result.type).toBe("doc")
+    expect(result.content).toHaveLength(1)
+    expect(result.content![0].type).toBe("paragraph")
   })
 })

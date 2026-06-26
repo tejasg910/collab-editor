@@ -14,6 +14,7 @@ import { Toolbar } from "./Toolbar"
 import { Editor } from "./Editor"
 import { StatusBar } from "@/modules/sync/ui/components/StatusBar"
 import { ErrorBoundary } from "@/components/ErrorBoundary"
+import { toast } from "sonner"
 import type { DocumentRole } from "@/modules/documents/types/document.types"
 import type { JSONContent } from "@tiptap/react"
 
@@ -41,6 +42,11 @@ export function DocumentEditor({
   const localChangeRef = useRef(false)
   // Ref so handleSyncComplete can access latest editor without being in deps
   const editorRef = useRef<ReturnType<typeof useEditor>>(null)
+  // Live editor content — updated on every keystroke, used by sync engine as
+  // "local" so the merge never sees a stale IDB snapshot mid-typing
+  const liveContentRef = useRef<JSONContent | null>(null)
+  // Idle timer — sync fires 5s after the last keystroke, never mid-typing
+  const idleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   const [syncing, setSyncing] = useState(false)
   const [lastSyncedAt, setLastSyncedAt] = useState<number | undefined>()
@@ -58,7 +64,7 @@ export function DocumentEditor({
     return () => clearTimeout(t)
   }, [loading, fromCache, syncedOnce])
 
-  const handleSyncComplete = useCallback((merged: JSONContent, syncedAt: number) => {
+  const handleSyncComplete = useCallback((merged: JSONContent, syncedAt: number, conflictCount: number) => {
     // Skip if editor already has this exact content — preserves undo stack
     const current = editorRef.current
     if (current) {
@@ -70,11 +76,26 @@ export function DocumentEditor({
     setSyncing(false)
     setLastSyncedAt(syncedAt)
     setSyncedOnce(true)
+
+    if (conflictCount > 0) {
+      toast.warning(
+        `${conflictCount} conflict${conflictCount !== 1 ? "s" : ""} auto-resolved`,
+        {
+          description: "Both edits affected the same block. Saved to version history — you can restore either side.",
+          action: {
+            label: "View history",
+            onClick: () => setHistoryOpen(true),
+          },
+          duration: 8000,
+        }
+      )
+    }
   }, [setDocContent])
 
   const { sync, isOnline } = useSyncEngine({
     documentId,
     role,
+    liveContentRef,
     onSyncStart: () => setSyncing(true),
     onSyncComplete: handleSyncComplete,
     onSyncError: () => setSyncing(false),
@@ -92,8 +113,16 @@ export function DocumentEditor({
     editable,
     immediatelyRender: false,
     onUpdate({ editor }) {
+      const json = editor.getJSON()
       localChangeRef.current = true
-      updateContent(editor.getJSON(), userId)
+      liveContentRef.current = json
+      updateContent(json, userId)
+
+      // Idle-based sync: fire 5s after typing stops, never mid-keystroke
+      if (idleTimerRef.current) clearTimeout(idleTimerRef.current)
+      idleTimerRef.current = setTimeout(() => {
+        sync()
+      }, 5000)
     },
   })
 
@@ -101,6 +130,13 @@ export function DocumentEditor({
   useEffect(() => {
     editorRef.current = editor
   }, [editor])
+
+  // Clear idle timer on unmount
+  useEffect(() => {
+    return () => {
+      if (idleTimerRef.current) clearTimeout(idleTimerRef.current)
+    }
+  }, [])
 
   // Push content into editor only when it changed from OUTSIDE (sync/load), not from typing.
   // Calling setContent from a local change would wipe ProseMirror's redo stack.

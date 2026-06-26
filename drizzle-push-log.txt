@@ -1,0 +1,6 @@
+﻿No config path provided, using default 'drizzle.config.ts'
+Reading config file 'D:\personal\assignment\collab-editor\drizzle.config.ts'
+◇ injected env (8) from .env.local // tip: ⌘ suppress logs { quiet: true }
+Using 'postgres' driver for database querying
+[⣷] Pulling schema from database...
+[2K[1G[⣷] Pulling schema from database...
