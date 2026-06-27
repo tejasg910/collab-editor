@@ -131,9 +131,12 @@ export async function saveSyncMeta(meta: SyncMeta): Promise<void> {
 
 export async function nextLamportClock(docId: string): Promise<number> {
   const meta = await getSyncMeta(docId)
-  const next = meta.lastSyncedClock + 1
-  await saveSyncMeta({ ...meta, lastSyncedClock: next })
-  return next
+  const pending = await getUnsyncedOps(docId)
+  const maxPending = pending.reduce((m, op) => Math.max(m, op.lamportClock), 0)
+  // Must exceed both the last server-confirmed clock and any existing pending op clocks.
+  // Does NOT write to sync_meta — lastSyncedClock is only advanced by server sync,
+  // never by local op creation (otherwise pull's "since" param gets polluted).
+  return Math.max(meta.lastSyncedClock, maxPending) + 1
 }
 
 export async function updateLamportClock(

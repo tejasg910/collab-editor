@@ -1,8 +1,18 @@
 import type { JSONContent } from "@tiptap/react"
 
+export type ConflictBlock = {
+  /** Position in the merged output array where this block was placed */
+  mergedIndex: number
+  local: JSONContent
+  remote: JSONContent
+  /** Which version was auto-selected (higher Lamport clock wins) */
+  winner: JSONContent
+}
+
 export type MergeResult = {
   content: JSONContent
-  conflictCount: number
+  /** Non-empty when both sides changed the same block from the same base */
+  conflicts: ConflictBlock[]
 }
 
 /**
@@ -10,14 +20,13 @@ export type MergeResult = {
  *
  * Rule per block position i:
  *   local == remote          → take either (no conflict)
- *   base undefined           → both added new content; include both
+ *   base undefined           → both added new content at same position
  *   base == local            → only remote changed; take remote
  *   base == remote           → only local changed; take local
  *   base != local != remote  → genuine conflict; higher Lamport clock wins
  *
- * Returns merged content + how many blocks had genuine conflicts (both sides
- * changed the same block from the same base). Callers use conflictCount to
- * show a toast and auto-save a snapshot so the user can recover either version.
+ * Returns merged content + ConflictBlock[] for any positions where both
+ * sides changed the same block (so the UI can offer manual resolution).
  */
 export function threeWayMerge(
   base: JSONContent,
@@ -32,7 +41,7 @@ export function threeWayMerge(
 
   const maxLen = Math.max(baseBlocks.length, localBlocks.length, remoteBlocks.length)
   const merged: JSONContent[] = []
-  let conflictCount = 0
+  const conflicts: ConflictBlock[] = []
 
   for (let i = 0; i < maxLen; i++) {
     const b = baseBlocks[i]
@@ -46,15 +55,12 @@ export function threeWayMerge(
     if (lStr === rStr) {
       if (l !== undefined) merged.push(l)
     } else if (b === undefined) {
-      // Both users added blocks beyond the base length.
+      // Both added content beyond the base length — this is additive, not a conflict.
+      // No shared base means they weren't editing the same thing; just pick deterministically.
       if (lStr === rStr) {
-        // Identical addition — push once
         if (l !== undefined) merged.push(l)
       } else if (l !== undefined && r !== undefined) {
-        // Both added DIFFERENT content at the same new position.
-        // Push-both creates an extra block that cascades into bad merges on the
-        // next sync cycle. Use clock tiebreak instead — deterministic, no phantom block.
-        conflictCount++
+        // Both added different blocks at the same new position; clock tiebreak, no conflict UI.
         const winner = localClock >= remoteClock ? l : r
         merged.push(winner)
       } else if (l !== undefined) {
@@ -68,9 +74,11 @@ export function threeWayMerge(
       if (l !== undefined) merged.push(l)
     } else {
       // Genuine conflict — both changed same block from same base
-      conflictCount++
       const winner = localClock >= remoteClock ? l : r
-      if (winner !== undefined) merged.push(winner)
+      if (winner !== undefined) {
+        conflicts.push({ mergedIndex: merged.length, local: l!, remote: r!, winner })
+        merged.push(winner)
+      }
     }
   }
 
@@ -79,7 +87,7 @@ export function threeWayMerge(
       type: "doc",
       content: merged.length > 0 ? merged : [{ type: "paragraph" }],
     },
-    conflictCount,
+    conflicts,
   }
 }
 
@@ -109,4 +117,23 @@ export function nextLamportClock(current: number): number {
  */
 export function updateLamportClock(local: number, received: number): number {
   return Math.max(local, received) + 1
+}
+
+/**
+ * Apply a user's conflict resolution choice to the merged content.
+ * For each resolved conflict, replace the auto-merged block at mergedIndex
+ * with the user's chosen version.
+ */
+export function applyResolutions(
+  merged: JSONContent,
+  resolutions: Map<number, JSONContent>
+): JSONContent {
+  if (resolutions.size === 0) return merged
+  const blocks = [...(merged.content ?? [])]
+  resolutions.forEach((chosen, mergedIndex) => {
+    if (mergedIndex < blocks.length) {
+      blocks[mergedIndex] = chosen
+    }
+  })
+  return { type: "doc", content: blocks }
 }

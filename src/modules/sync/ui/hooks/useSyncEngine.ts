@@ -2,7 +2,6 @@
 
 import { useEffect, useRef, useCallback } from "react"
 import { useOnlineStatus } from "./useOnlineStatus"
-import { getBrowserClient } from "@/lib/supabase"
 import {
   getUnsyncedOps,
   markOpsSynced,
@@ -14,18 +13,16 @@ import {
   saveLocalDoc,
 } from "@/lib/db/local"
 import { threeWayMerge, pickWinner } from "@/modules/sync/utils/mergeUtils"
+import type { ConflictBlock } from "@/modules/sync/utils/mergeUtils"
 import type { JSONContent } from "@tiptap/react"
-import type { RefObject } from "react"
 
 interface SyncEngineOptions {
   documentId: string
   role: "owner" | "editor" | "viewer"
-  // Must be true before sync runs — prevents syncing before IDB load completes,
-  // which would make setDocContent a no-op (doc is null) and leave IDB stale.
+  // Must be true before sync runs — prevents syncing before IDB load completes.
   enabled: boolean
-  liveContentRef: RefObject<JSONContent | null>
   onSyncStart: () => void
-  onSyncComplete: (mergedContent: JSONContent, lastSyncedAt: number, conflictCount: number) => void
+  onSyncComplete: (mergedContent: JSONContent, lastSyncedAt: number, conflicts: ConflictBlock[]) => void
   onSyncError: () => void
 }
 
@@ -35,13 +32,17 @@ export function useSyncEngine({
   documentId,
   role,
   enabled,
-  liveContentRef,
   onSyncStart,
   onSyncComplete,
   onSyncError,
 }: SyncEngineOptions) {
   const isOnline = useOnlineStatus()
   const syncingRef = useRef(false)
+  // True when a sync was requested while another was in flight.
+  // After the current sync finishes, we run one more to pick up any missed events.
+  const pendingSyncRef = useRef(false)
+  // Stable ref to always call the latest sync function (avoids stale closure in retry).
+  const syncFnRef = useRef<() => Promise<void>>(async () => {})
 
   const onSyncStartRef = useRef(onSyncStart)
   const onSyncCompleteRef = useRef(onSyncComplete)
@@ -58,15 +59,23 @@ export function useSyncEngine({
 
   const sync = useCallback(async () => {
     if (!isOnlineRef.current) return
-    if (!enabledRef.current) return   // wait for IDB load (doc must be non-null before setDocContent)
-    if (syncingRef.current) return
+    if (!enabledRef.current) return
+    if (syncingRef.current) {
+      // Another sync is in flight — queue a retry so we don't drop this event.
+      pendingSyncRef.current = true
+      return
+    }
     syncingRef.current = true
     onSyncStartRef.current()
 
     try {
       // ── 1. PUSH ──────────────────────────────────────────────────
+      // Capture local op clock BEFORE push clears pending ops from IDB.
+      // This is the true "how recent is local" value for the merge winner decision.
+      const unsyncedOps = await getUnsyncedOps(documentId)
+      const maxLocalOpClock = unsyncedOps.reduce((m, op) => Math.max(m, op.lamportClock), 0)
+
       if (role !== "viewer") {
-        const unsyncedOps = await getUnsyncedOps(documentId)
         if (unsyncedOps.length > 0) {
           const res = await fetch("/api/sync/push", {
             method: "POST",
@@ -84,10 +93,17 @@ export function useSyncEngine({
 
       // ── 2. PULL ──────────────────────────────────────────────────
       const meta = await getSyncMeta(documentId)
-      const localClock = meta.lastSyncedClock
+      // localClock = max of sync base clock and highest local op clock.
+      const localClock = Math.max(meta.lastSyncedClock, maxLocalOpClock)
+
+      // Use server createdAt timestamp as pull cursor, NOT Lamport clock.
+      // Lamport clocks diverge across clients (e.g., one at 57, other at 62)
+      // causing each client to miss the other's ops. Server timestamps are
+      // monotonically increasing and independent of any client's clock.
+      const sinceMs = meta.lastSeenOpAt ?? 0
 
       const pullRes = await fetch(
-        `/api/sync/pull?documentId=${documentId}&since=${meta.lastSyncedClock}`
+        `/api/sync/pull?documentId=${documentId}&sinceMs=${sinceMs}`
       )
       if (!pullRes.ok) {
         const { error } = await pullRes.json()
@@ -95,23 +111,30 @@ export function useSyncEngine({
       }
 
       const { ops: remoteOps } = await pullRes.json()
+      console.log(`[sync] pull sinceMs=${sinceMs} → ${remoteOps.length} remote ops`)
       const now = Date.now()
 
-      // Use live editor content as "local" — this is what the user currently
-      // sees, including any keystrokes not yet flushed to IDB by the debounce.
+      // Advance the cursor past the latest createdAt we received.
+      // +1ms ensures strict progression even when Postgres timestamps have sub-ms
+      // precision (µs) — without it, same ops re-match on every pull.
+      const maxSeenOpAt = remoteOps.length > 0
+        ? Math.max(...(remoteOps as Array<{ createdAt: string }>).map(
+            (op) => new Date(op.createdAt).getTime()
+          )) + 1
+        : sinceMs
+
+      // IDB is the single source of truth for local content.
       const localDoc = await getLocalDoc(documentId)
-      // meta.syncedContent = last agreed state, updated after every sync cycle.
-      // Prefer it over localDoc.content which can be stale (EMPTY_DOC) because
-      // setDocContent only updates React state, not IDB documents store.
-      const localContent = liveContentRef.current ?? meta.syncedContent ?? localDoc?.content ?? EMPTY_DOC
+      const localContent = localDoc?.content ?? EMPTY_DOC
 
       if (remoteOps.length > 0) {
         // ── 3. THREE-WAY MERGE ───────────────────────────────────
         const remoteWinner = pickWinner(remoteOps)
         const remoteClock  = remoteWinner.lamportClock
+        // base = last agreed state between all clients
         const base = meta.syncedContent ?? EMPTY_DOC
 
-        const { content: merged, conflictCount } = threeWayMerge(
+        const { content: merged, conflicts } = threeWayMerge(
           base,
           localContent,
           remoteWinner.content as JSONContent,
@@ -131,32 +154,25 @@ export function useSyncEngine({
           lastSyncedClock: maxClock + 1,
           lastSyncedAt: now,
           syncedContent: merged,
+          lastSeenOpAt: maxSeenOpAt,
         })
 
-        // Update in-memory ref immediately — do not wait for the React chain
-        // (setDocContent → doc.content → useEffect → editor.setContent → onUpdate).
-        // If a Supabase notification fires in that window, the next sync() must
-        // see the merged content as "local", not the stale pre-merge content.
-        liveContentRef.current = merged
-
-        // Auto-save a snapshot when conflicts were auto-resolved so the user
-        // can open version history and recover either side
-        if (conflictCount > 0 && role !== "viewer") {
+        if (conflicts.length > 0 && role !== "viewer") {
           fetch("/api/snapshots", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
               documentId,
               content: merged,
-              label: `Auto-resolved: ${conflictCount} conflict${conflictCount !== 1 ? "s" : ""}`,
+              label: `Auto-resolved: ${conflicts.length} conflict${conflicts.length !== 1 ? "s" : ""}`,
               atLamportClock: maxClock + 1,
             }),
-          }).catch(() => {}) // fire-and-forget — not critical
+          }).catch(() => {})
         }
 
-        onSyncCompleteRef.current(merged, now, conflictCount)
+        onSyncCompleteRef.current(merged, now, conflicts)
       } else {
-        // No remote changes — local is already correct, just update meta
+        // No remote changes — persist local content and update sync clock
         if (localDoc) {
           await saveLocalDoc({ ...localDoc, content: localContent, syncedAt: now })
         }
@@ -164,48 +180,52 @@ export function useSyncEngine({
           ...meta,
           lastSyncedAt: now,
           syncedContent: localContent,
+          lastSeenOpAt: maxSeenOpAt,  // keep cursor even when no ops received
         })
-        liveContentRef.current = localContent
-        onSyncCompleteRef.current(localContent, now, 0)
+        onSyncCompleteRef.current(localContent, now, [])
       }
     } catch {
       onSyncErrorRef.current()
     } finally {
       syncingRef.current = false
+      // A sync event arrived while we were busy — run one more cycle now.
+      if (pendingSyncRef.current) {
+        pendingSyncRef.current = false
+        setTimeout(() => syncFnRef.current(), 0)
+      }
     }
-  }, [documentId, role, liveContentRef])
+  }, [documentId, role])
 
-  // Sync whenever we become online OR IDB finishes loading — whichever happens last.
-  // Without the `enabled` dep, sync fired before IDB load completed, doc was null,
-  // setDocContent couldn't write to IDB, and the document appeared empty on reload.
+  // Keep syncFnRef current so the retry closure always calls the latest version.
+  useEffect(() => { syncFnRef.current = sync }, [sync])
+
+  // Sync whenever we come online OR IDB finishes loading — whichever is last.
   useEffect(() => {
     if (isOnline && enabled) sync()
   }, [isOnline, enabled, sync])
 
-  // Real-time: subscribe to Supabase postgres_changes on sync_operations.
-  // When another user pushes an op for this document, Supabase notifies all
-  // subscribed clients instantly — no polling, no SSE endpoint needed.
+  // Real-time: SSE stream receives pg_notify from the server after each push.
+  // EventSource auto-reconnects on drop — no manual retry logic needed.
   useEffect(() => {
     if (!isOnline) return
 
-    const supabase = getBrowserClient()
-    const channel = supabase
-      .channel(`doc-${documentId}`)
-      .on(
-        "postgres_changes",
-        {
-          event: "INSERT",
-          schema: "public",
-          table: "sync_operations",
-          filter: `document_id=eq.${documentId}`,
-        },
-        () => sync()
-      )
-      .subscribe()
+    const es = new EventSource(`/api/sync/stream?documentId=${documentId}`)
 
-    return () => {
-      supabase.removeChannel(channel)
+    es.onopen = () => console.log("[SSE] connected", documentId)
+    es.onerror = (e) => console.error("[SSE] error", e)
+
+    es.onmessage = (e: MessageEvent) => {
+      try {
+        const data = JSON.parse(e.data as string) as { type: string; reason?: string }
+        console.log("[SSE] event", data)
+        if (data.type === "update") sync()
+        if (data.type === "error") console.error("[SSE] server error:", data.reason)
+      } catch {
+        // malformed event — ignore
+      }
     }
+
+    return () => es.close()
   }, [documentId, isOnline, sync])
 
   return { sync, isOnline }

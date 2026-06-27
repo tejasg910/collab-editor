@@ -25,4 +25,8 @@ export type SyncMeta = {
   lastSyncedClock: number
   lastSyncedAt: number
   syncedContent?: JSONContent  // base snapshot for three-way merge
+  // Server-assigned createdAt of the latest op we've pulled.
+  // Used as the pull cursor instead of Lamport clock — server timestamps
+  // are monotonically increasing and don't diverge across clients.
+  lastSeenOpAt?: number  // epoch ms
 }

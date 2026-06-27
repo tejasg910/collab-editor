@@ -127,20 +127,22 @@ describe("threeWayMerge", () => {
     expect((result.content![0].content![0] as JSONContent).text).toBe("local version")
   })
 
-  it("genuine conflict → conflictCount incremented", () => {
+  it("genuine conflict → conflicts array has one entry", () => {
     const base   = doc(para("original"))
     const local  = doc(para("local version"))
     const remote = doc(para("remote version"))
-    const { conflictCount } = threeWayMerge(base, local, remote, 5, 10)
-    expect(conflictCount).toBe(1)
+    const { conflicts } = threeWayMerge(base, local, remote, 5, 10)
+    expect(conflicts).toHaveLength(1)
+    expect(conflicts[0].local).toEqual(para("local version"))
+    expect(conflicts[0].remote).toEqual(para("remote version"))
   })
 
-  it("no conflict → conflictCount is 0", () => {
+  it("no conflict → conflicts array is empty", () => {
     const base   = doc(para("A"), para("B"))
     const local  = doc(para("A-edited"), para("B"))
     const remote = doc(para("A"), para("B-edited"))
-    const { conflictCount } = threeWayMerge(base, local, remote, 2, 3)
-    expect(conflictCount).toBe(0)
+    const { conflicts } = threeWayMerge(base, local, remote, 2, 3)
+    expect(conflicts).toHaveLength(0)
   })
 
   it("local adds new block, remote unchanged → both new blocks included", () => {
@@ -152,12 +154,15 @@ describe("threeWayMerge", () => {
     expect((result.content![1].content![0] as JSONContent).text).toBe("B-local")
   })
 
-  it("both add different new blocks (no base) → includes both", () => {
+  it("both add different new blocks (no base) → clock winner kept, no conflict recorded", () => {
     const base   = doc(para("A"))
     const local  = doc(para("A"), para("B-local"))
     const remote = doc(para("A"), para("B-remote"))
-    const result = merge(base, local, remote, 2, 3)
-    expect(result.content).toHaveLength(3)
+    // remote clock (3) > local (2) → remote wins; additive case, not a conflict
+    const result = threeWayMerge(base, local, remote, 2, 3)
+    expect(result.content.content).toHaveLength(2)
+    expect(result.conflicts).toHaveLength(0)
+    expect((result.content.content![1].content![0] as JSONContent).text).toBe("B-remote")
   })
 
   it("remote deletes a block that local didn't touch → deletion honoured", () => {

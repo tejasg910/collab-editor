@@ -40,7 +40,6 @@ export function useDocument(docId: string, serverTitle?: string): UseDocumentRet
   // Load from IndexedDB on mount
   useEffect(() => {
     let cancelled = false
-
     async function load() {
       setLoading(true)
       try {

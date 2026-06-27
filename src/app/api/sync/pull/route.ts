@@ -9,14 +9,15 @@ export async function GET(req: NextRequest) {
 
   const { searchParams } = new URL(req.url)
   const documentId = searchParams.get("documentId")
-  const sinceClock = parseInt(searchParams.get("since") ?? "0", 10)
+  // sinceMs = epoch ms of latest op already pulled; 0 means fetch all
+  const sinceMs = parseInt(searchParams.get("sinceMs") ?? "0", 10)
 
   if (!documentId) {
     return NextResponse.json({ error: "Missing documentId" }, { status: 400 })
   }
 
   try {
-    const ops = await pullOps(session.user.id, documentId, sinceClock)
+    const ops = await pullOps(session.user.id, documentId, sinceMs)
     return NextResponse.json({ ops })
   } catch (err) {
     const message = err instanceof Error ? err.message : "Pull failed"

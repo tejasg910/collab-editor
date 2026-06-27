@@ -13,10 +13,11 @@ import { AIPanel } from "@/modules/ai/ui/components/AIPanel"
 import { Toolbar } from "./Toolbar"
 import { Editor } from "./Editor"
 import { StatusBar } from "@/modules/sync/ui/components/StatusBar"
+import { ConflictBlockExtension } from "@/modules/sync/ui/extensions/ConflictBlockExtension"
 import { ErrorBoundary } from "@/components/ErrorBoundary"
-import { toast } from "sonner"
 import type { DocumentRole } from "@/modules/documents/types/document.types"
 import type { JSONContent } from "@tiptap/react"
+import type { ConflictBlock } from "@/modules/sync/utils/mergeUtils"
 
 
 interface DocumentEditorProps {
@@ -37,14 +38,8 @@ export function DocumentEditor({
     documentId,
     serverTitle
   )
-  // Tracks whether the last doc.content change came from the editor itself.
-  // If true, skip setContent in the sync effect — calling it would wipe the redo stack.
-  const localChangeRef = useRef(false)
   // Ref so handleSyncComplete can access latest editor without being in deps
   const editorRef = useRef<ReturnType<typeof useEditor>>(null)
-  // Live editor content — updated on every keystroke, used by sync engine as
-  // "local" so the merge never sees a stale IDB snapshot mid-typing
-  const liveContentRef = useRef<JSONContent | null>(null)
   // Idle timer — sync fires 5s after the last keystroke, never mid-typing
   const idleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   // True while setContent is being applied for a remote/sync update.
@@ -60,6 +55,10 @@ export function DocumentEditor({
   const [syncedOnce, setSyncedOnce] = useState(false)
   // Offline fallback: if no sync within 3s, show whatever we have anyway
   const [syncTimedOut, setSyncTimedOut] = useState(false)
+  // Conflicts detected during last sync — injected as inline nodes after setContent
+  const [pendingConflicts, setPendingConflicts] = useState<ConflictBlock[]>([])
+  // Tracks whether current pendingConflicts have already been injected into the editor
+  const conflictsInjectedRef = useRef(false)
 
   useEffect(() => {
     if (loading || fromCache || syncedOnce) return
@@ -67,7 +66,7 @@ export function DocumentEditor({
     return () => clearTimeout(t)
   }, [loading, fromCache, syncedOnce])
 
-  const handleSyncComplete = useCallback((merged: JSONContent, syncedAt: number, conflictCount: number) => {
+  const handleSyncComplete = useCallback((merged: JSONContent, syncedAt: number, conflicts: ConflictBlock[]) => {
     // Skip if editor already has this exact content — preserves undo stack
     const current = editorRef.current
     if (current) {
@@ -80,27 +79,17 @@ export function DocumentEditor({
     setLastSyncedAt(syncedAt)
     setSyncedOnce(true)
 
-    if (conflictCount > 0) {
-      toast.warning(
-        `${conflictCount} conflict${conflictCount !== 1 ? "s" : ""} auto-resolved`,
-        {
-          description: "Both edits affected the same block. Saved to version history — you can restore either side.",
-          action: {
-            label: "View history",
-            onClick: () => setHistoryOpen(true),
-          },
-          duration: 8000,
-        }
-      )
+    if (conflicts.length > 0 && role !== "viewer") {
+      conflictsInjectedRef.current = false  // new conflicts — allow injection
+      setPendingConflicts(conflicts)
     }
-  }, [setDocContent])
+  }, [setDocContent, role])
 
   const { sync, isOnline } = useSyncEngine({
     documentId,
     role,
-    enabled: !loading,   // don't sync until IDB load completes — doc must be non-null
-    liveContentRef,
-    onSyncStart: () => setSyncing(true),
+    enabled: !loading,
+    onSyncStart: () => { setSyncing(true); setPendingConflicts([]) },
     onSyncComplete: handleSyncComplete,
     onSyncError: () => setSyncing(false),
   })
@@ -112,6 +101,7 @@ export function DocumentEditor({
     extensions: [
       StarterKit,
       Placeholder.configure({ placeholder: "Start writing…" }),
+      ConflictBlockExtension,
     ],
     content: doc?.content ?? { type: "doc", content: [{ type: "paragraph" }] },
     editable,
@@ -121,8 +111,6 @@ export function DocumentEditor({
       // liveContentRef is already updated directly in useSyncEngine in that case.
       if (applyingRemoteRef.current) return
       const json = editor.getJSON()
-      localChangeRef.current = true
-      liveContentRef.current = json
       updateContent(json, userId)
 
       // Idle-based sync: fire 5s after typing stops, never mid-keystroke
@@ -145,20 +133,20 @@ export function DocumentEditor({
     }
   }, [])
 
-  // Push content into editor only when it changed from OUTSIDE (sync/load), not from typing.
-  // Calling setContent from a local change would wipe ProseMirror's redo stack.
+  // Push content into editor when it changes from outside (IDB load or sync merge).
+  // Guarded by JSON comparison — if editor already has this content (e.g., user just
+  // typed it), current===incoming → no setContent, undo stack is preserved.
+  // Also skips if unresolved conflict blocks are present — user must resolve first.
   useEffect(() => {
     if (!editor || !doc?.content) return
-    if (localChangeRef.current) {
-      localChangeRef.current = false
-      return
-    }
+    let hasConflicts = false
+    editor.state.doc.forEach((node) => {
+      if (node.type.name === "conflictBlock") hasConflicts = true
+    })
+    if (hasConflicts) return
     const current = JSON.stringify(editor.getJSON())
     const incoming = JSON.stringify(doc.content)
     if (current !== incoming) {
-      // Snapshot cursor before replacing content so the user's position is preserved.
-      // Without this, setContent resets cursor to 0 — mid-typing the user's
-      // keystrokes would land in the wrong block after a remote merge arrives.
       const prevSel = editor.state.selection
       applyingRemoteRef.current = true
       editor.commands.setContent(doc.content, { emitUpdate: false })
@@ -173,6 +161,48 @@ export function DocumentEditor({
       }
     }
   }, [doc?.content, editor])
+
+  // Inject conflict nodes inline at their exact block positions.
+  // Deferred via setTimeout so TipTap's dispatch (which calls flushSync internally)
+  // runs outside the React commit phase — avoids "flushSync in lifecycle" warning.
+  // Also guards with applyingRemoteRef so onUpdate doesn't push conflictBlock content as an op.
+  useEffect(() => {
+    if (!editor || pendingConflicts.length === 0 || conflictsInjectedRef.current) return
+    conflictsInjectedRef.current = true
+
+    const sorted = [...pendingConflicts].sort((a, b) => b.mergedIndex - a.mergedIndex)
+
+    setTimeout(() => {
+      applyingRemoteRef.current = true
+      for (const conflict of sorted) {
+        // Re-read state each iteration — previous dispatch updated it
+        const state = editor.state
+        let blockPos = -1
+        let idx = 0
+        state.doc.forEach((_node, offset) => {
+          if (idx === conflict.mergedIndex) blockPos = offset
+          idx++
+        })
+        if (blockPos < 0) continue
+
+        const nodeAtPos = state.doc.nodeAt(blockPos)
+        if (!nodeAtPos) continue
+
+        try {
+          const conflictNode = state.schema.nodes.conflictBlock.create({
+            localBlock: conflict.local,
+            remoteBlock: conflict.remote,
+          })
+          editor.view.dispatch(
+            editor.state.tr.replaceWith(blockPos, blockPos + nodeAtPos.nodeSize, conflictNode)
+          )
+        } catch {
+          // skip if schema rejects
+        }
+      }
+      applyingRemoteRef.current = false
+    }, 0)
+  }, [pendingConflicts, editor])
 
   // Sync editable flag (role can change without remount)
   useEffect(() => {
@@ -289,6 +319,7 @@ export function DocumentEditor({
           setHistoryOpen(false)
         }}
       />
+
     </ErrorBoundary>
   )
 }
