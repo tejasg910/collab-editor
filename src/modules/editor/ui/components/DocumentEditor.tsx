@@ -47,6 +47,9 @@ export function DocumentEditor({
   const liveContentRef = useRef<JSONContent | null>(null)
   // Idle timer — sync fires 5s after the last keystroke, never mid-typing
   const idleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  // True while setContent is being applied for a remote/sync update.
+  // Guards onUpdate so it doesn't create spurious pending ops from merged content.
+  const applyingRemoteRef = useRef(false)
 
   const [syncing, setSyncing] = useState(false)
   const [lastSyncedAt, setLastSyncedAt] = useState<number | undefined>()
@@ -113,6 +116,9 @@ export function DocumentEditor({
     editable,
     immediatelyRender: false,
     onUpdate({ editor }) {
+      // Skip when setContent was called by the sync engine — not a user edit.
+      // liveContentRef is already updated directly in useSyncEngine in that case.
+      if (applyingRemoteRef.current) return
       const json = editor.getJSON()
       localChangeRef.current = true
       liveContentRef.current = json
@@ -149,7 +155,9 @@ export function DocumentEditor({
     const current = JSON.stringify(editor.getJSON())
     const incoming = JSON.stringify(doc.content)
     if (current !== incoming) {
-      editor.commands.setContent(doc.content)
+      applyingRemoteRef.current = true
+      editor.commands.setContent(doc.content, { emitUpdate: false })
+      applyingRemoteRef.current = false
     }
   }, [doc?.content, editor])
 

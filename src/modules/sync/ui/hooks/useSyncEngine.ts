@@ -128,6 +128,12 @@ export function useSyncEngine({
           syncedContent: merged,
         })
 
+        // Update in-memory ref immediately — do not wait for the React chain
+        // (setDocContent → doc.content → useEffect → editor.setContent → onUpdate).
+        // If a Supabase notification fires in that window, the next sync() must
+        // see the merged content as "local", not the stale pre-merge content.
+        liveContentRef.current = merged
+
         // Auto-save a snapshot when conflicts were auto-resolved so the user
         // can open version history and recover either side
         if (conflictCount > 0 && role !== "viewer") {
@@ -154,6 +160,7 @@ export function useSyncEngine({
           lastSyncedAt: now,
           syncedContent: localContent,
         })
+        liveContentRef.current = localContent
         onSyncCompleteRef.current(localContent, now, 0)
       }
     } catch {
