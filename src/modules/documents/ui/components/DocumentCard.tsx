@@ -1,6 +1,6 @@
 "use client"
 
-import { useActionState, useState } from "react"
+import { useActionState, useState, useEffect } from "react"
 import { useRouter } from "next/navigation"
 import { motion } from "framer-motion"
 import { FileText, Trash2, Users, Share2 } from "lucide-react"
@@ -36,6 +36,10 @@ export function DocumentCard({
   const router = useRouter()
   const [state, formAction, pending] = useActionState(deleteDocumentAction, {})
   const [shareOpen, setShareOpen] = useState(false)
+
+  useEffect(() => {
+    if (state.success) router.refresh()
+  }, [state.success, router])
 
   return (
     <motion.div

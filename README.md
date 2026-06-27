@@ -30,7 +30,7 @@ A local-first collaborative document editor built for the House of Edtech fullst
 | Framework | Next.js 16 (App Router) |
 | Language | TypeScript |
 | Styling | Tailwind CSS v4 + shadcn/ui (Base UI) |
-| Database | PostgreSQL via Neon (serverless) |
+| Database | PostgreSQL via Supabase |
 | ORM | Drizzle ORM |
 | Auth | Better Auth |
 | Local storage | IndexedDB via `idb` |
@@ -56,7 +56,7 @@ src/
   lib/
     db/
       schema.ts     ← Drizzle schema (documents, members, sync_ops, snapshots)
-      index.ts      ← Neon DB client + RLS helper
+      index.ts      ← Supabase DB client + RLS helper
       local.ts      ← IndexedDB store (primary source of truth)
     auth.ts         ← Better Auth server config
     auth-client.ts  ← Better Auth client
@@ -97,7 +97,7 @@ document_snapshots — documentId, content (JSONB), label, atLamportClock
 ### Prerequisites
 
 - Node.js 20+
-- [Neon](https://neon.tech) PostgreSQL database
+- [Supabase](https://supabase.com) PostgreSQL database
 - [Groq](https://console.groq.com) API key (free tier, no card required)
 
 ### Install

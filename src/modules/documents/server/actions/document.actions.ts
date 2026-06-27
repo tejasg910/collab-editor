@@ -11,7 +11,7 @@ import {
   updateDocumentTitle,
 } from "@/modules/documents/server/services/document.service"
 
-export type DocumentFormState = { error?: string }
+export type DocumentFormState = { error?: string; success?: boolean }
 
 async function getSession() {
   const session = await auth.api.getSession({ headers: await headers() })
@@ -52,7 +52,7 @@ export async function deleteDocumentAction(
   }
 
   revalidatePath("/dashboard")
-  return {}
+  return { success: true }
 }
 
 export async function updateDocumentTitleAction(
