@@ -20,9 +20,9 @@ import type { RefObject } from "react"
 interface SyncEngineOptions {
   documentId: string
   role: "owner" | "editor" | "viewer"
-  // Ref to the live editor content — updated on every keystroke in DocumentEditor.
-  // Passed here so the merge uses what the user is currently seeing, not the
-  // potentially-stale IDB snapshot (which lags behind by the 300ms debounce).
+  // Must be true before sync runs — prevents syncing before IDB load completes,
+  // which would make setDocContent a no-op (doc is null) and leave IDB stale.
+  enabled: boolean
   liveContentRef: RefObject<JSONContent | null>
   onSyncStart: () => void
   onSyncComplete: (mergedContent: JSONContent, lastSyncedAt: number, conflictCount: number) => void
@@ -34,6 +34,7 @@ const EMPTY_DOC: JSONContent = { type: "doc", content: [{ type: "paragraph" }] }
 export function useSyncEngine({
   documentId,
   role,
+  enabled,
   liveContentRef,
   onSyncStart,
   onSyncComplete,
@@ -52,8 +53,12 @@ export function useSyncEngine({
   const isOnlineRef = useRef(isOnline)
   useEffect(() => { isOnlineRef.current = isOnline }, [isOnline])
 
+  const enabledRef = useRef(enabled)
+  useEffect(() => { enabledRef.current = enabled }, [enabled])
+
   const sync = useCallback(async () => {
     if (!isOnlineRef.current) return
+    if (!enabledRef.current) return   // wait for IDB load (doc must be non-null before setDocContent)
     if (syncingRef.current) return
     syncingRef.current = true
     onSyncStartRef.current()
@@ -170,10 +175,12 @@ export function useSyncEngine({
     }
   }, [documentId, role, liveContentRef])
 
-  // Sync when coming back online (covers the offline-then-reconnect case)
+  // Sync whenever we become online OR IDB finishes loading — whichever happens last.
+  // Without the `enabled` dep, sync fired before IDB load completed, doc was null,
+  // setDocContent couldn't write to IDB, and the document appeared empty on reload.
   useEffect(() => {
-    if (isOnline) sync()
-  }, [isOnline, sync])
+    if (isOnline && enabled) sync()
+  }, [isOnline, enabled, sync])
 
   // Real-time: subscribe to Supabase postgres_changes on sync_operations.
   // When another user pushes an op for this document, Supabase notifies all

@@ -46,8 +46,22 @@ export function threeWayMerge(
     if (lStr === rStr) {
       if (l !== undefined) merged.push(l)
     } else if (b === undefined) {
-      if (l !== undefined) merged.push(l)
-      if (r !== undefined && rStr !== lStr) merged.push(r)
+      // Both users added blocks beyond the base length.
+      if (lStr === rStr) {
+        // Identical addition — push once
+        if (l !== undefined) merged.push(l)
+      } else if (l !== undefined && r !== undefined) {
+        // Both added DIFFERENT content at the same new position.
+        // Push-both creates an extra block that cascades into bad merges on the
+        // next sync cycle. Use clock tiebreak instead — deterministic, no phantom block.
+        conflictCount++
+        const winner = localClock >= remoteClock ? l : r
+        merged.push(winner)
+      } else if (l !== undefined) {
+        merged.push(l)
+      } else if (r !== undefined) {
+        merged.push(r)
+      }
     } else if (bStr === lStr) {
       if (r !== undefined) merged.push(r)
     } else if (bStr === rStr) {

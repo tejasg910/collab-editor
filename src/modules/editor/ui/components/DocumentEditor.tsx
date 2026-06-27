@@ -98,6 +98,7 @@ export function DocumentEditor({
   const { sync, isOnline } = useSyncEngine({
     documentId,
     role,
+    enabled: !loading,   // don't sync until IDB load completes — doc must be non-null
     liveContentRef,
     onSyncStart: () => setSyncing(true),
     onSyncComplete: handleSyncComplete,
@@ -155,9 +156,21 @@ export function DocumentEditor({
     const current = JSON.stringify(editor.getJSON())
     const incoming = JSON.stringify(doc.content)
     if (current !== incoming) {
+      // Snapshot cursor before replacing content so the user's position is preserved.
+      // Without this, setContent resets cursor to 0 — mid-typing the user's
+      // keystrokes would land in the wrong block after a remote merge arrives.
+      const prevSel = editor.state.selection
       applyingRemoteRef.current = true
       editor.commands.setContent(doc.content, { emitUpdate: false })
       applyingRemoteRef.current = false
+      try {
+        const maxPos = editor.state.doc.content.size - 1
+        const from = Math.min(prevSel.from, maxPos)
+        const to   = Math.min(prevSel.to,   maxPos)
+        editor.commands.setTextSelection({ from, to })
+      } catch {
+        // ignore — doc size changed in a way that makes old position invalid
+      }
     }
   }, [doc?.content, editor])
 
