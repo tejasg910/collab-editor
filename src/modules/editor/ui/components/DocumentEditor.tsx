@@ -149,7 +149,7 @@ export function DocumentEditor({
     if (current !== incoming) {
       const prevSel = editor.state.selection
       applyingRemoteRef.current = true
-      editor.commands.setContent(doc.content, { emitUpdate: false })
+      editor.commands.setContent(doc.content, {emitUpdate:false})
       applyingRemoteRef.current = false
       try {
         const maxPos = editor.state.doc.content.size - 1

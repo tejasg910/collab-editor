@@ -172,15 +172,21 @@ export function useSyncEngine({
 
         onSyncCompleteRef.current(merged, now, conflicts)
       } else {
-        // No remote changes — persist local content and update sync clock
+        // No remote changes — persist local content and update sync clock.
+        // Only advance syncedContent (the three-way merge base) when:
+        //   (a) we actually pushed ops — server now has this state, so it's the new agreed base
+        //   (b) base is not yet set — first sync, establish baseline
+        // Advancing it on SSE-retry syncs (nothing pushed) would corrupt the base:
+        // local edits would become invisible to the next merge → silent data loss.
         if (localDoc) {
           await saveLocalDoc({ ...localDoc, content: localContent, syncedAt: now })
         }
+        const shouldAdvanceBase = unsyncedOps.length > 0 || !meta.syncedContent
         await saveSyncMeta({
           ...meta,
           lastSyncedAt: now,
-          syncedContent: localContent,
-          lastSeenOpAt: maxSeenOpAt,  // keep cursor even when no ops received
+          ...(shouldAdvanceBase ? { syncedContent: localContent } : {}),
+          lastSeenOpAt: maxSeenOpAt,
         })
         onSyncCompleteRef.current(localContent, now, [])
       }
@@ -227,6 +233,14 @@ export function useSyncEngine({
 
     return () => es.close()
   }, [documentId, isOnline, sync])
+
+  // Polling fallback: pull every 10s even when SSE is silent.
+  // Guards against Neon pooler dropping LISTEN/NOTIFY or any SSE gap.
+  useEffect(() => {
+    if (!isOnline || !enabled) return
+    const id = setInterval(() => syncFnRef.current(), 10_000)
+    return () => clearInterval(id)
+  }, [isOnline, enabled])
 
   return { sync, isOnline }
 }
