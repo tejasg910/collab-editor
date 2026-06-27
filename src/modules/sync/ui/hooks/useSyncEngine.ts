@@ -95,7 +95,10 @@ export function useSyncEngine({
       // Use live editor content as "local" — this is what the user currently
       // sees, including any keystrokes not yet flushed to IDB by the debounce.
       const localDoc = await getLocalDoc(documentId)
-      const localContent = liveContentRef.current ?? localDoc?.content ?? EMPTY_DOC
+      // meta.syncedContent = last agreed state, updated after every sync cycle.
+      // Prefer it over localDoc.content which can be stale (EMPTY_DOC) because
+      // setDocContent only updates React state, not IDB documents store.
+      const localContent = liveContentRef.current ?? meta.syncedContent ?? localDoc?.content ?? EMPTY_DOC
 
       if (remoteOps.length > 0) {
         // ── 3. THREE-WAY MERGE ───────────────────────────────────

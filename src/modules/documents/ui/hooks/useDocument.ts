@@ -32,6 +32,10 @@ export function useDocument(docId: string, serverTitle?: string): UseDocumentRet
   const [fromCache, setFromCache] = useState(false)
   const [lamportClock, setLamportClock] = useState(0)
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const currentDocRef = useRef<LocalDocument | null>(null)
+
+  // Track current doc so setDocContent can write it to IDB without stale closure
+  useEffect(() => { currentDocRef.current = doc }, [doc])
 
   // Load from IndexedDB on mount
   useEffect(() => {
@@ -112,10 +116,16 @@ export function useDocument(docId: string, serverTitle?: string): UseDocumentRet
     [doc]
   )
 
-  // Called by sync engine after pulling remote content
+  // Called by sync engine after pulling remote content.
+  // Must also write to IDB so the document loads from cache correctly on next visit.
   const setDocContent = useCallback(
     (content: JSONContent) => {
-      setDoc((prev) => prev ? { ...prev, content, syncedAt: Date.now() } : prev)
+      const now = Date.now()
+      setDoc((prev) => prev ? { ...prev, content, syncedAt: now } : prev)
+      const current = currentDocRef.current
+      if (current) {
+        saveLocalDoc({ ...current, content, syncedAt: now }).catch(() => {})
+      }
     },
     []
   )

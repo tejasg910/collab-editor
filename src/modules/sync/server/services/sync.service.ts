@@ -1,6 +1,6 @@
 import { db, withRLS } from "@/lib/db"
 import { syncOperations } from "@/lib/db/schema"
-import { eq, gt, and } from "drizzle-orm"
+import { eq, gte, and } from "drizzle-orm"
 import type { JSONContent } from "@tiptap/react"
 
 // 512KB per op — blocks OOM attacks from oversized payloads
@@ -75,7 +75,7 @@ export async function pullOps(
     .where(
       and(
         eq(syncOperations.documentId, documentId),
-        gt(syncOperations.lamportClock, sinceClock)
+        gte(syncOperations.lamportClock, sinceClock)
       )
     )
     .orderBy(syncOperations.lamportClock)
