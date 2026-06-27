@@ -73,12 +73,15 @@ User types
   → UI re-renders from local state
   → useSyncEngine queues op with nextLamportClock()
 
-On reconnect
+On idle (5s after last keystroke) / reconnect / SSE notification
   → Push queued local ops to /api/sync/push
-  → Pull remote ops since last clock from /api/sync/pull
-  → pickWinner() merges: sort by lamportClock, tiebreak by userId
-  → Winner content written to editor + IndexedDB
-  → lastSyncedClock updated
+    → Server calls pg_notify('sync_ops', documentId)
+    → All SSE subscribers for that doc receive 'update' event → sync()
+  → Pull remote ops since lastSeenOpAt from /api/sync/pull
+  → threeWayMerge(base, local, remote) — three-way merge with syncedContent as common ancestor
+  → Merged content written to editor + IndexedDB
+  → lastSyncedClock + lastSeenOpAt updated
+  → Polling fallback every 10s guards against SSE gaps
 ```
 
 ### Database Schema
@@ -113,8 +116,11 @@ npm install
 Create `.env.local`:
 
 ```env
-# Neon PostgreSQL
-DATABASE_URL="postgresql://..."
+# Supabase PostgreSQL (Settings → Database → Connection string)
+# Pooled connection (Transaction pooler, port 6543) — used for queries
+DATABASE_URL="postgresql://postgres.[ref]:[password]@aws-0-[region].pooler.supabase.com:6543/postgres"
+# Direct connection (port 5432) — required for LISTEN/NOTIFY (SSE real-time)
+DIRECT_URL="postgresql://postgres.[ref]:[password]@db.[ref].supabase.co:5432/postgres"
 
 # Better Auth
 BETTER_AUTH_SECRET="<run: openssl rand -base64 32>"
@@ -151,6 +157,7 @@ Open [http://localhost:3000](http://localhost:3000).
 | `GET/POST/DELETE` | `/api/documents/[id]/members` | Share, list, remove members |
 | `POST` | `/api/sync/push` | Push local ops to server |
 | `GET` | `/api/sync/pull` | Pull remote ops since clock |
+| `GET` | `/api/sync/stream` | SSE stream — real-time push notifications via pg_notify |
 | `GET/POST` | `/api/snapshots` | List and create version snapshots |
 | `POST` | `/api/snapshots/[id]/restore` | Restore a past version |
 | `POST` | `/api/ai` | AI streaming completions (Groq) |
