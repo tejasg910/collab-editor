@@ -110,6 +110,13 @@ export function DocumentEditor({
       // Skip when setContent was called by the sync engine — not a user edit.
       // liveContentRef is already updated directly in useSyncEngine in that case.
       if (applyingRemoteRef.current) return
+      // Don't persist conflictBlock nodes as ops — they're UI-only overlays.
+      // Saving them would push conflictBlock JSON to server, causing infinite nesting.
+      let hasUnresolvedConflicts = false
+      editor.state.doc.forEach((node) => {
+        if (node.type.name === "conflictBlock") hasUnresolvedConflicts = true
+      })
+      if (hasUnresolvedConflicts) return
       const json = editor.getJSON()
       updateContent(json, userId)
 

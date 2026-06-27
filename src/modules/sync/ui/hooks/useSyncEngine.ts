@@ -28,6 +28,25 @@ interface SyncEngineOptions {
 
 const EMPTY_DOC: JSONContent = { type: "doc", content: [{ type: "paragraph" }] }
 
+// Strip conflictBlock nodes from a doc before using it as merge input.
+// conflictBlock is a UI-only overlay — it must never enter the merge base or
+// remote winner, or threeWayMerge will generate a new conflict on every pull,
+// wrapping the old conflictBlock in a new one infinitely.
+function sanitizeDoc(doc: JSONContent): JSONContent {
+  if (!doc.content) return doc
+  return {
+    ...doc,
+    content: (doc.content as JSONContent[]).flatMap((block) => {
+      if (block.type === "conflictBlock") {
+        // Prefer the remote version as the canonical block to keep
+        const remote = block.attrs?.remoteBlock as JSONContent | undefined
+        return remote ? [remote] : []
+      }
+      return [block]
+    }),
+  }
+}
+
 export function useSyncEngine({
   documentId,
   role,
@@ -134,10 +153,11 @@ export function useSyncEngine({
         // base = last agreed state between all clients
         const base = meta.syncedContent ?? EMPTY_DOC
 
+        const remoteContent = sanitizeDoc(remoteWinner.content as JSONContent)
         const { content: merged, conflicts } = threeWayMerge(
           base,
           localContent,
-          remoteWinner.content as JSONContent,
+          remoteContent,
           localClock,
           remoteClock
         )

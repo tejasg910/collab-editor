@@ -34,7 +34,9 @@ export async function GET(req: NextRequest) {
   // LISTEN/NOTIFY requires a direct (non-pooled) connection.
   // PgBouncer in transaction mode drops session-level commands like LISTEN.
   // Use DATABASE_URL_UNPOOLED if set (Neon provides this), else fall back to DATABASE_URL.
-  const listenUrl = process.env.DATABASE_URL_UNPOOLED ?? process.env.DATABASE_URL!
+  // LISTEN/NOTIFY requires a direct (non-pooled) connection.
+  // Supabase: use DIRECT_URL. Neon: use DATABASE_URL_UNPOOLED. Fallback: DATABASE_URL.
+  const listenUrl = process.env.DIRECT_URL ?? process.env.DATABASE_URL_UNPOOLED ?? process.env.DATABASE_URL!
   const listenSql = postgres(listenUrl, {
     max: 1,
     idle_timeout: 0,
